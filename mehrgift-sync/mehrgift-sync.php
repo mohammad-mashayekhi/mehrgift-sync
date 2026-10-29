@@ -2,7 +2,7 @@
 /**
  * Plugin Name: همگام‌ساز مهرگیفت
  * Description: همگام‌سازی مهرگیفت — AJAX مستقیم مثل نسخه ۴، با ردیابی قیمت/جزئیات/عکس و تطبیق کد کالا.
- * Version: 5.2.1
+ * Version: 5.2.2
  * Author: تیم رادینو / Raadino
  * Author URI: https://raadino.com/
  * Requires at least: 5.8
@@ -14,13 +14,14 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'MEHRGIFT_SYNC_VERSION', '5.2.1' );
+define( 'MEHRGIFT_SYNC_VERSION', '5.2.2' );
 define( 'MEHRGIFT_SYNC_FILE', __FILE__ );
 define( 'MEHRGIFT_SYNC_DIR', plugin_dir_path( __FILE__ ) );
 define( 'MEHRGIFT_SYNC_URL', plugin_dir_url( __FILE__ ) );
 
 require_once MEHRGIFT_SYNC_DIR . 'includes/class-mehrgift-activator.php';
 require_once MEHRGIFT_SYNC_DIR . 'includes/class-mehrgift-settings.php';
+require_once MEHRGIFT_SYNC_DIR . 'includes/class-mehrgift-categories.php';
 require_once MEHRGIFT_SYNC_DIR . 'includes/class-mehrgift-api-client.php';
 require_once MEHRGIFT_SYNC_DIR . 'includes/class-mehrgift-scraper.php';
 require_once MEHRGIFT_SYNC_DIR . 'includes/class-mehrgift-image-processor.php';

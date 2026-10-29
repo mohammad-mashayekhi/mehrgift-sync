@@ -15,7 +15,10 @@ class Mehrgift_Settings {
 
 	public static function defaults() {
 		return array(
-			'discount_percent'    => 20,
+			'discount_percent'        => 20,
+			'discount_threshold'      => 500000,
+			'discount_percent_above' => 20,
+			'discount_percent_below' => 10,
 			'crop_percent'        => 14,
 			'output_size'         => 800,
 			'jpeg_quality'        => 88,
@@ -33,15 +36,21 @@ class Mehrgift_Settings {
 			'use_background'      => 0,
 			'auto_sync_enabled'   => 0,
 			'daily_sync_hour'     => 0,
-			'fetch_specs_bulk'    => 0,
-			'show_specs_tab'      => 1,
-			'show_kala_code'      => 1,
+			'fetch_specs_bulk'     => 0,
+			'show_specs_tab'       => 1,
+			'show_kala_code'       => 1,
+			'excluded_categories'  => array(),
 		);
 	}
 
 	public static function get( $key = null ) {
 		self::maybe_set_defaults();
-		$settings = wp_parse_args( get_option( self::OPTION_KEY, array() ), self::defaults() );
+		$stored   = get_option( self::OPTION_KEY, array() );
+		$stored   = is_array( $stored ) ? $stored : array();
+		$settings = wp_parse_args( $stored, self::defaults() );
+		if ( ! array_key_exists( 'discount_percent_above', $stored ) ) {
+			$settings['discount_percent_above'] = (int) $settings['discount_percent'];
+		}
 		if ( null === $key ) {
 			return $settings;
 		}
@@ -53,7 +62,10 @@ class Mehrgift_Settings {
 		$defaults = self::defaults();
 
 		$settings = array(
-			'discount_percent'  => max( 0, min( 99, (int) ( $input['discount_percent'] ?? $current['discount_percent'] ) ) ),
+			'discount_percent'        => max( 0, min( 99, (int) ( $input['discount_percent_above'] ?? $input['discount_percent'] ?? $current['discount_percent'] ) ) ),
+			'discount_threshold'      => max( 0, (int) ( $input['discount_threshold'] ?? $current['discount_threshold'] ?? 500000 ) ),
+			'discount_percent_above' => max( 0, min( 99, (int) ( $input['discount_percent_above'] ?? $current['discount_percent_above'] ?? $current['discount_percent'] ) ) ),
+			'discount_percent_below' => max( 0, min( 99, (int) ( $input['discount_percent_below'] ?? $current['discount_percent_below'] ?? 10 ) ) ),
 			'crop_percent'      => max( 0, min( 40, (float) ( $input['crop_percent'] ?? $current['crop_percent'] ) ) ),
 			'output_size'       => max( 400, min( 2000, (int) ( $input['output_size'] ?? $current['output_size'] ) ) ),
 			'jpeg_quality'      => max( 60, min( 100, (int) ( $input['jpeg_quality'] ?? $current['jpeg_quality'] ) ) ),
@@ -74,16 +86,60 @@ class Mehrgift_Settings {
 			'auto_sync_enabled' => ! empty( $input['auto_sync_enabled'] ) ? 1 : 0,
 			'daily_sync_hour'   => max( 0, min( 23, (int) ( $input['daily_sync_hour'] ?? $current['daily_sync_hour'] ?? 0 ) ) ),
 			'fetch_specs_bulk'  => ! empty( $input['fetch_specs_bulk'] ) ? 1 : 0,
-			'show_specs_tab'    => ! empty( $input['show_specs_tab'] ) ? 1 : 0,
-			'show_kala_code'    => ! empty( $input['show_kala_code'] ) ? 1 : 0,
+			'show_specs_tab'       => ! empty( $input['show_specs_tab'] ) ? 1 : 0,
+			'show_kala_code'       => ! empty( $input['show_kala_code'] ) ? 1 : 0,
+			'excluded_categories'  => empty( Mehrgift_Categories::catalog() )
+				? self::excluded_categories()
+				: Mehrgift_Categories::expand_slugs( self::sanitize_category_slug_list( $input['excluded_categories'] ?? array() ) ),
 		);
 
 		update_option( self::OPTION_KEY, $settings );
 		return $settings;
 	}
 
-	public static function sale_multiplier() {
-		$discount = (float) self::get( 'discount_percent' );
+	public static function sanitize_category_slug( $slug ) {
+		$slug = rawurldecode( wp_unslash( (string) $slug ) );
+		$slug = trim( $slug, " \t\n\r\0\x0B/" );
+		if ( '' === $slug || false !== strpos( $slug, '/' ) || false !== strpos( $slug, '..' ) ) {
+			return '';
+		}
+		if ( ! preg_match( '/^(?:cat-|category-).+/u', $slug ) ) {
+			return '';
+		}
+		return $slug;
+	}
+
+	public static function sanitize_category_slug_list( $raw ) {
+		if ( ! is_array( $raw ) ) {
+			return array();
+		}
+		$out = array();
+		foreach ( $raw as $slug ) {
+			$slug = self::sanitize_category_slug( $slug );
+			if ( '' !== $slug ) {
+				$out[] = $slug;
+			}
+		}
+		return array_values( array_unique( $out ) );
+	}
+
+	public static function excluded_categories() {
+		return self::sanitize_category_slug_list( self::get( 'excluded_categories' ) );
+	}
+
+	public static function discount_percent_for( $price ) {
+		$price     = (float) $price;
+		$threshold = (float) self::get( 'discount_threshold' );
+		if ( $threshold > 0 && $price < $threshold ) {
+			return (float) self::get( 'discount_percent_below' );
+		}
+		return (float) self::get( 'discount_percent_above' );
+	}
+
+	public static function sale_multiplier( $price = null ) {
+		$discount = null === $price
+			? (float) self::get( 'discount_percent_above' )
+			: self::discount_percent_for( $price );
 		return max( 0.01, ( 100 - $discount ) / 100 );
 	}
 

@@ -187,14 +187,30 @@ class Mehrgift_Pipeline {
 		if ( is_wp_error( $products ) ) {
 			throw new Exception( $products->get_error_message() );
 		}
-		Mehrgift_Api_Client::save_local_cache( $products );
-		foreach ( $products as $item ) {
+		$indexed = Mehrgift_Categories::rebuild_index();
+		if ( is_wp_error( $indexed ) ) {
+			throw new Exception( $indexed->get_error_message() );
+		}
+
+		$saved = Mehrgift_Api_Client::save_local_cache( $products );
+		if ( is_wp_error( $saved ) ) {
+			throw new Exception( $saved->get_error_message() );
+		}
+		$filtered = Mehrgift_Api_Client::load_local_cache();
+		if ( is_wp_error( $filtered ) ) {
+			throw new Exception( $filtered->get_error_message() );
+		}
+		foreach ( $filtered as $item ) {
 			Mehrgift_Sync_Registry::mark_fetch( (int) $item['id'], $item );
 		}
-		Mehrgift_Cron::log( 'کش دانلود شد: ' . count( $products ) );
+		Mehrgift_Cron::log( sprintf(
+			'کش دانلود شد: %d محصول، %d حذف‌شده.',
+			count( $filtered ),
+			max( 0, count( $products ) - count( $filtered ) )
+		) );
 
 		$create_count = 0;
-		foreach ( $products as $item ) {
+		foreach ( $filtered as $item ) {
 			if ( ! Mehrgift_Product_Sync::find_product_id( (int) $item['id'], $item['barcode_primary'] ?? '' ) ) {
 				$create_count++;
 			}
@@ -203,7 +219,7 @@ class Mehrgift_Pipeline {
 		Mehrgift_Job::save_state( array(
 			'phase'       => self::PHASE_CREATE,
 			'offset'      => 0,
-			'total'       => count( $products ),
+			'total'       => count( $filtered ),
 			'phase_total' => $create_count,
 		) );
 		Mehrgift_Cron::log( sprintf( 'فاز ۲: ایجاد محصولات جدید (%d عدد)...', $create_count ) );
@@ -404,6 +420,11 @@ class Mehrgift_Pipeline {
 			$item      = Mehrgift_Api_Client::find_in_cache( $remote_id );
 			$index++;
 
+			if ( Mehrgift_Categories::is_excluded( $remote_id ) ) {
+				Mehrgift_Cron::log( "SKIP #{$remote_id}: این محصول در دسته حذف‌شده است." );
+				continue;
+			}
+
 			if ( is_wp_error( $item ) ) {
 				Mehrgift_Cron::log( "ERROR #{$remote_id}: " . $item->get_error_message() );
 				continue;
@@ -442,7 +463,10 @@ class Mehrgift_Pipeline {
 		Mehrgift_Product_Sync::end_performance_mode();
 		unset( $GLOBALS['mehrgift_throttle'] );
 
-		if ( is_wp_error( $result ) ) {
+		if ( is_wp_error( $result ) && 'mehrgift_excluded' === $result->get_error_code() ) {
+			$stats['skipped'] = ( (int) ( $stats['skipped'] ?? 0 ) ) + 1;
+			Mehrgift_Cron::log( 'SKIP: ' . $result->get_error_message() );
+		} elseif ( is_wp_error( $result ) ) {
 			$stats[ $stat_prefix . '_err' ] = ( (int) ( $stats[ $stat_prefix . '_err' ] ?? 0 ) ) + 1;
 			Mehrgift_Cron::log( 'ERROR: ' . $result->get_error_message() );
 		} else {

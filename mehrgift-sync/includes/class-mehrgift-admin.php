@@ -258,7 +258,16 @@ class Mehrgift_Admin {
 	}
 
 	private static function render_settings_tab() {
+		if ( isset( $_POST['mehrgift_refresh_categories'] ) && check_admin_referer( 'mehrgift_settings' ) ) {
+			$catalog = Mehrgift_Categories::refresh_catalog();
+			if ( is_wp_error( $catalog ) ) {
+				echo '<div class="notice notice-error"><p>' . esc_html( $catalog->get_error_message() ) . '</p></div>';
+			} else {
+				echo '<div class="notice notice-success"><p>' . esc_html( sprintf( 'لیست دسته‌ها دریافت شد (%d دسته).', count( $catalog ) ) ) . '</p></div>';
+			}
+		}
 		if ( isset( $_POST['mehrgift_save_settings'] ) && check_admin_referer( 'mehrgift_settings' ) ) {
+			@set_time_limit( 300 );
 			Mehrgift_Settings::save( wp_unslash( $_POST ) );
 			$saved = Mehrgift_Settings::get();
 			if ( empty( $saved['use_background'] ) ) {
@@ -268,7 +277,17 @@ class Mehrgift_Admin {
 			if ( class_exists( 'Mehrgift_Scheduler' ) ) {
 				Mehrgift_Scheduler::maybe_schedule();
 			}
-			echo '<div class="notice notice-success"><p>تنظیمات ذخیره شد.</p></div>';
+			$indexed = Mehrgift_Categories::rebuild_index();
+			if ( is_wp_error( $indexed ) ) {
+				echo '<div class="notice notice-error"><p>' . esc_html( 'تنظیمات ذخیره شد، اما شمارش محصولات دسته‌های حذف‌شده ناموفق بود. لیست قبلی حفظ شد. ' . $indexed->get_error_message() ) . '</p></div>';
+			} elseif ( empty( $saved['excluded_categories'] ) ) {
+				echo '<div class="notice notice-success"><p>تنظیمات ذخیره شد. هیچ دسته‌ای حذف نشده است.</p></div>';
+			} else {
+				echo '<div class="notice notice-success"><p>' . esc_html( sprintf(
+					'تنظیمات ذخیره شد. %d محصول از دسته‌های انتخاب‌شده وارد همگام‌سازی نمی‌شوند. محصولات قبلی فروشگاه تغییر نمی‌کنند. برای هم‌خوان شدن کش، یک‌بار لیست محصولات را دوباره دانلود کنید.',
+					(int) $indexed
+				) ) . '</p></div>';
+			}
 		}
 		$s = Mehrgift_Settings::get();
 		?>
@@ -277,8 +296,15 @@ class Mehrgift_Admin {
 				<?php wp_nonce_field( 'mehrgift_settings' ); ?>
 				<table class="form-table">
 					<tr>
-						<th>درصد تخفیف فروش</th>
-						<td><input type="number" name="discount_percent" value="<?php echo esc_attr( $s['discount_percent'] ); ?>" min="0" max="99"> %</td>
+						<th>تخفیف فروش</th>
+						<td>
+							<input type="number" name="discount_threshold" value="<?php echo esc_attr( $s['discount_threshold'] ); ?>" min="0" step="1000"> تومان و بیشتر:
+							<input type="number" name="discount_percent_above" value="<?php echo esc_attr( $s['discount_percent_above'] ); ?>" min="0" max="99"> %
+							<br>
+							کمتر از این مبلغ:
+							<input type="number" name="discount_percent_below" value="<?php echo esc_attr( $s['discount_percent_below'] ); ?>" min="0" max="99"> %
+							<p class="description">قیمت عادی همان قیمت مهرگیفت است. برای هر تنوع، تخفیف از روی قیمت همان تنوع حساب می‌شود. مبلغ مرز خودش شامل درصد بالاتر است.</p>
+						</td>
 					</tr>
 					<tr>
 						<th>کراپ متقارن از هر ۴ طرف</th>
@@ -375,11 +401,80 @@ class Mehrgift_Admin {
 						<th>نمایش کد کالا در صفحه محصول</th>
 						<td><label><input type="checkbox" name="show_kala_code" value="1" <?php checked( $s['show_kala_code'] ); ?>> فعال</label></td>
 					</tr>
+					<tr>
+						<th>دسته‌های حذف‌شده از مبدا</th>
+						<td>
+							<?php self::render_excluded_categories( $s ); ?>
+						</td>
+					</tr>
 				</table>
 				<p><button type="submit" name="mehrgift_save_settings" class="button button-primary">ذخیره تنظیمات</button></p>
 			</form>
+			<form id="mg-refresh-categories" method="post" class="mg-refresh-categories-form">
+				<?php wp_nonce_field( 'mehrgift_settings' ); ?>
+			</form>
 		</div>
 		<?php
+	}
+
+	private static function render_excluded_categories( array $settings ) {
+		$catalog  = Mehrgift_Categories::catalog();
+		$selected = Mehrgift_Settings::sanitize_category_slug_list( $settings['excluded_categories'] ?? array() );
+		$summary  = Mehrgift_Categories::index_summary();
+		?>
+		<p class="description">محصولات این دسته‌ها از مهرگیفت گرفته نمی‌شوند و در این سایت ساخته یا به‌روز نمی‌شوند. محصولات قبلی فروشگاه دست نمی‌خورند. با انتخاب یک دستهٔ مادر، زیردسته‌هایش هم حذف می‌شوند.</p>
+		<?php if ( empty( $catalog ) ) : ?>
+			<p>ابتدا لیست دسته‌ها را از مهرگیفت دریافت کنید.</p>
+		<?php else : ?>
+			<?php self::render_category_branch( self::category_children_map( $catalog ), '', $selected ); ?>
+		<?php endif; ?>
+		<p><button type="submit" name="mehrgift_refresh_categories" form="mg-refresh-categories" class="button">دریافت لیست دسته‌ها از مهرگیفت</button></p>
+		<?php if ( $summary['built_at'] ) : ?>
+			<p class="description">
+				<?php
+				echo esc_html( sprintf( 'آخرین شمارش: %d محصول (%s).', (int) $summary['count'], $summary['built_at'] ) );
+				if ( $summary['stale'] ) {
+					echo ' لیست قدیمی است. تنظیمات را ذخیره کنید تا دوباره شمارش شود.';
+				}
+				?>
+			</p>
+		<?php endif; ?>
+		<?php
+	}
+
+	private static function category_children_map( array $catalog ) {
+		$known     = array();
+		$by_parent = array();
+		foreach ( $catalog as $cat ) {
+			if ( ! empty( $cat['slug'] ) ) {
+				$known[ $cat['slug'] ] = true;
+			}
+		}
+		foreach ( $catalog as $cat ) {
+			if ( empty( $cat['slug'] ) ) {
+				continue;
+			}
+			$parent = (string) ( $cat['parent'] ?? '' );
+			if ( '' === $parent || empty( $known[ $parent ] ) ) {
+				$parent = '';
+			}
+			$by_parent[ $parent ][] = $cat;
+		}
+		return $by_parent;
+	}
+
+	private static function render_category_branch( array $by_parent, $parent, array $selected ) {
+		if ( empty( $by_parent[ $parent ] ) ) {
+			return;
+		}
+		echo '<ul class="mg-cat-tree">';
+		foreach ( $by_parent[ $parent ] as $cat ) {
+			$slug = $cat['slug'];
+			echo '<li><label><input type="checkbox" class="mg-excluded-cat" name="excluded_categories[]" value="' . esc_attr( $slug ) . '" data-slug="' . esc_attr( $slug ) . '" ' . checked( in_array( $slug, $selected, true ), true, false ) . '> ' . esc_html( $cat['title'] ) . '</label>';
+			self::render_category_branch( $by_parent, $slug, $selected );
+			echo '</li>';
+		}
+		echo '</ul>';
 	}
 
 	public static function ajax_fetch_all() {
@@ -391,16 +486,30 @@ class Mehrgift_Admin {
 			wp_send_json_error( $products->get_error_message() );
 		}
 
-		$count = Mehrgift_Api_Client::save_local_cache( $products );
-		if ( is_wp_error( $count ) ) {
-			wp_send_json_error( $count->get_error_message() );
+		$indexed = Mehrgift_Categories::rebuild_index();
+		if ( is_wp_error( $indexed ) ) {
+			wp_send_json_error( $indexed->get_error_message() );
 		}
 
-		foreach ( $products as $item ) {
+		$saved = Mehrgift_Api_Client::save_local_cache( $products );
+		if ( is_wp_error( $saved ) ) {
+			wp_send_json_error( $saved->get_error_message() );
+		}
+
+		$filtered = Mehrgift_Api_Client::load_local_cache();
+		if ( is_wp_error( $filtered ) ) {
+			wp_send_json_error( $filtered->get_error_message() );
+		}
+
+		foreach ( $filtered as $item ) {
 			Mehrgift_Sync_Registry::mark_fetch( (int) $item['id'], $item );
 		}
 
-		wp_send_json_success( array( 'count' => $count ) );
+		wp_send_json_success( array(
+			'count'    => count( $filtered ),
+			'excluded' => max( 0, count( $products ) - count( $filtered ) ),
+			'total'    => count( $products ),
+		) );
 	}
 
 	public static function ajax_process_batch() {
@@ -413,6 +522,11 @@ class Mehrgift_Admin {
 		$image_mode  = $with_images || 'images' === $mode;
 		$limit       = isset( $_POST['limit'] ) ? (int) $_POST['limit'] : Mehrgift_Settings::get_batch_limit( $mode, $with_images );
 
+		set_time_limit( 300 );
+		$indexed = Mehrgift_Categories::ensure_index();
+		if ( is_wp_error( $indexed ) ) {
+			wp_send_json_error( $indexed->get_error_message() );
+		}
 		set_time_limit( $image_mode ? 300 : 120 );
 
 		$products = Mehrgift_Api_Client::load_local_cache();
@@ -548,6 +662,14 @@ class Mehrgift_Admin {
 
 		$remote_id = (int) ( $_POST['remote_id'] ?? 0 );
 		$mode      = sanitize_key( $_POST['mode'] ?? 'full' );
+
+		$indexed = Mehrgift_Categories::ensure_index();
+		if ( is_wp_error( $indexed ) ) {
+			wp_send_json_error( $indexed->get_error_message() );
+		}
+		if ( Mehrgift_Categories::is_excluded( $remote_id ) ) {
+			wp_send_json_error( 'این محصول در دسته حذف‌شده است.' );
+		}
 
 		$item = Mehrgift_Api_Client::find_in_cache( $remote_id );
 		if ( is_wp_error( $item ) ) {

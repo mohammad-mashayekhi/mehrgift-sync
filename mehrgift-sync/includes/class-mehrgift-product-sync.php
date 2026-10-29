@@ -23,6 +23,9 @@ class Mehrgift_Product_Sync {
 		if ( ! $remote_id ) {
 			return new WP_Error( 'mehrgift_sync', 'شناسه محصول نامعتبر است.' );
 		}
+		if ( Mehrgift_Categories::is_excluded( $remote_id ) ) {
+			return new WP_Error( 'mehrgift_excluded', 'این محصول در دسته حذف‌شده است.' );
+		}
 
 		Mehrgift_Sync_Registry::mark_fetch( $remote_id, $item );
 
@@ -137,7 +140,8 @@ class Mehrgift_Product_Sync {
 			$advanced++;
 			$result = self::sync_item( $item, $mode, $with_images );
 			if ( is_wp_error( $result ) ) {
-				$logs .= 'SKIP/ERROR (' . $item['id'] . '): ' . $result->get_error_message() . "\n";
+				$prefix = 'mehrgift_excluded' === $result->get_error_code() ? 'SKIP' : 'SKIP/ERROR';
+				$logs  .= $prefix . ' (' . $item['id'] . '): ' . $result->get_error_message() . "\n";
 				continue;
 			}
 
@@ -187,6 +191,10 @@ class Mehrgift_Product_Sync {
 				continue;
 			}
 			$remote_id  = (int) $item['id'];
+			if ( Mehrgift_Categories::is_excluded( $remote_id ) ) {
+				$skipped++;
+				continue;
+			}
 			$product_id = $id_map[ $remote_id ] ?? self::find_product_id( $remote_id, $item['barcode_primary'] ?? '' );
 			if ( ! $product_id ) {
 				$skipped++;
@@ -343,7 +351,8 @@ class Mehrgift_Product_Sync {
 			return round( $regular_price * ( 100 - $api_discount ) / 100 );
 		}
 
-		return round( $regular_price * Mehrgift_Settings::sale_multiplier() );
+		$percent = Mehrgift_Settings::discount_percent_for( $regular_price );
+		return round( $regular_price * ( 100 - $percent ) / 100 );
 	}
 
 	private static function partial_update( $product_id, array $item, $mode, $with_images ) {

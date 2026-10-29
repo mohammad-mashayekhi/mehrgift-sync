@@ -38,6 +38,14 @@ class Mehrgift_Api_Client {
 	}
 
 	public static function load_local_cache() {
+		$products = self::load_raw_cache();
+		if ( is_wp_error( $products ) ) {
+			return $products;
+		}
+		return self::apply_exclusions( $products );
+	}
+
+	private static function load_raw_cache() {
 		if ( is_array( self::$memory_cache ) ) {
 			return self::$memory_cache;
 		}
@@ -58,9 +66,20 @@ class Mehrgift_Api_Client {
 			return new WP_Error( 'mehrgift_cache', 'فایل کش معتبر نیست.' );
 		}
 
-		self::$memory_cache  = $data;
+		self::$memory_cache = $data;
 		set_transient( 'mehrgift_products_mem', $data, HOUR_IN_SECONDS );
 		return $data;
+	}
+
+	public static function apply_exclusions( array $products ) {
+		$ids = Mehrgift_Categories::excluded_lookup();
+		if ( empty( $ids ) ) {
+			return $products;
+		}
+
+		return array_values( array_filter( $products, function ( $item ) use ( $ids ) {
+			return ! isset( $ids[ (int) ( $item['id'] ?? 0 ) ] );
+		} ) );
 	}
 
 	public static function find_in_cache( $remote_id ) {

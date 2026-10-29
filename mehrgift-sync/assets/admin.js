@@ -1,4 +1,17 @@
 jQuery(function ($) {
+    $(document).on('change', '.mg-excluded-cat', function () {
+        var $box = $(this);
+        var $li = $box.closest('li');
+        if (this.checked) {
+            $li.find('> ul .mg-excluded-cat').prop('checked', true);
+            return;
+        }
+        $li.find('> ul .mg-excluded-cat').prop('checked', false);
+        $box.parents('li').each(function () {
+            $(this).children('label').find('.mg-excluded-cat').prop('checked', false);
+        });
+    });
+
     if (typeof MehrgiftSync === 'undefined') {
         return;
     }
@@ -160,7 +173,12 @@ jQuery(function ($) {
             }
             total = res.data.count;
             MehrgiftSync.cacheTotal = total;
-            $('#mg-fetch-status').text('تعداد ' + total + ' محصول ذخیره شد.').css('color', 'green');
+            var excluded = parseInt(res.data.excluded, 10) || 0;
+            var statusText = 'تعداد ' + total + ' محصول برای همگام‌سازی آماده است.';
+            if (excluded) {
+                statusText += ' ' + excluded + ' محصول به‌خاطر دسته حذف شد.';
+            }
+            $('#mg-fetch-status').text(statusText).css('color', 'green');
             $('#mg-sync-area').removeClass('is-disabled');
             $btn.text('دانلود مجدد');
             log('کش دانلود شد: ' + total);
